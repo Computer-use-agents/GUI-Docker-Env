@@ -1,302 +1,150 @@
-# OSWorld 桌面环境服务器（VM/本机）部署与运行指南
+# OSWorld 远程 Docker 模拟器服务器（简版快速上手）
 
-本指南基于 `desktop_env/server` 目录的实现，说明如何在 Ubuntu 桌面环境中部署并启动 OSWorld 桌面环境服务器（Flask 服务），以及如何从网络下载并配置 QCOW 虚拟机镜像以配合远程 Docker/云端环境使用。内容包含：
-- 环境配置（系统与依赖、AT-SPI 可访问性支持）
-- 如何启动（systemd 服务与直接启动）
-- 需要修改的配置项（服务单元文件、配置文件、Chrome Debug 端口等）
-- 下载与配置 QCOW 镜像（HuggingFace 链接）
+本指南基于 `desktop_env/docker_server/server.py` 与项目配置，面向“远程 Docker 服务器”场景，提供最小化的使用说明：
+- 如何下载并配置 QCOW2 虚拟机镜像
+- 如何修改配置（IP、端口、QCOW 路径、token 与并发配额）
+- 如何启动服务并用示例脚本验证
+- 如何通过 Dashboard 查看当前运行状态
 
-如需详细的 Ubuntu 桌面与 VNC/noVNC 图形访问配置，可参考：`desktop_env/server/README.md`。
-
-## 目录定位
-
-- 核心服务代码：`desktop_env/server/main.py`（Flask，默认监听 `0.0.0.0:5000`）
-- 服务单元文件：`desktop_env/server/osworld_server.service`
-- Python 依赖：`desktop_env/server/requirements.txt`
-- 远程 Docker 服务配置：`configs/config.yaml`
-- QCOW 镜像 URL（参考）：
-  - Ubuntu: https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip
-  - Windows: https://huggingface.co/datasets/xlangai/windows_osworld/resolve/main/Windows-10-x64.qcow2.zip
+已按要求删除冗长内容（系统环境准备、systemd 服务部署、网络端口与远程控制、API 示例等）。本指南仅保留“需要修改哪里”和“如何启动/查看”的核心信息。
 
 ---
 
-## 一、系统环境准备（Ubuntu 桌面）
+## 1. 准备工作
 
-1) 安装 GNOME 桌面（若为最小系统）
-```
-sudo apt update
-sudo apt install -y ubuntu-desktop
-sudo systemctl set-default graphical.target
-```
+- 服务器主机需安装：
+  - Docker（确保 `dockerd` 正常运行）
+  - Python 3（建议 3.8+）
+- 磁盘空间充足，用于存放 QCOW2 镜像（几个 GB 到几十 GB 不等）
 
-2) 账号与自动登录
-- 示例用户名：`user`，密码：`password`（可自定义，但需与后续服务文件保持一致）。
-- GUI 开启自动登录：Settings -> Users -> Automatic Login（user）
-- 或编辑 `/etc/gdm3/custom.conf`，在 `[daemon]` 添加：
-```
-AutomaticLoginEnable=true
-AutomaticLogin=user
-```
-重启：
-```
-sudo systemctl restart gdm3
-```
-
-3) 使用 Xorg 而非 Wayland
-- 退出到登录界面，选择“Ubuntu on Xorg”
-- 检查：
-```
-echo $XDG_SESSION_TYPE  # 输出 x11 即为 Xorg
-```
-
-4) 可选：VNC/noVNC 远程可视化
-- 安装：
-```
-sudo apt update && sudo apt install -y x11vnc
-sudo snap install novnc
-```
-- 创建用户级 systemd 服务并开放 5910 端口（详见 `desktop_env/server/README.md`）。
-
-5) 必需/推荐依赖软件
-```
-sudo apt install -y python3 python3-pip python3-tk python3-dev \
-  gnome-screenshot wmctrl ffmpeg socat xclip python3-xlib
-```
-若系统找不到 python：
-```
-sudo ln -s /usr/bin/python3 /usr/bin/python
-```
-
-6) AT-SPI 可访问性支持（Linux）
-- 服务器使用 `pyatspi`（AT-SPI）。推荐通过 apt 安装：
-```
-sudo apt-get update
-sudo apt-get install -y python3-pyatspi
-```
-- 启用 GNOME 可访问性：
-```
-gsettings set org.gnome.desktop.interface toolkit-accessibility true
-```
-
-> 注意：不要将 `pyatspi` 与第三方命名相近的包混淆，优先通过 apt 安装 `python3-pyatspi`。
-
----
-
-## 二、Python 依赖安装
-
-在仓库根目录执行：
-```
-pip3 install -r desktop_env/server/requirements.txt
-```
-
-`requirements.txt` 主要包含：`flask`、`requests`、`lxml`、`Pillow`、`PyAutoGUI`、`python3-xlib`、`pygame`、`pywinauto` 等。
-- 特殊：`pynput` 使用的是一个 PR 分支（Apple Silicon 兼容）
-  ```
-  git+https://github.com/moses-palmer/pynput.git@refs/pull/541/head
-  ```
-- 若 `pip` 安装 `python3-xlib==0.15` 报错，可先通过 apt 安装 `python3-xlib`（上文已安装）。如依赖冲突，可临时从本机 `pip` 安装中跳过该行或改用 `python-xlib` 包（注意版本兼容性）。
-
----
-
-## 三、systemd 服务部署与修改点
-
-目标：开机自动启动 OSWorld 服务器。
-
-1) 放置文件
-- 将 `desktop_env/server/main.py` 与 `desktop_env/server/pyxcursor.py` 拷贝到目标目录，例如：`/home/user/server/`
-- 如路径或用户名不同，需同步修改服务单元文件中的 `ExecStart`、`WorkingDirectory` 与 `User`
-
-2) 检查与修改服务单元文件  
-参考：`desktop_env/server/osworld_server.service`
-
-建议示例（注意 Python3 路径与用户/目录）：
-```
-[Unit]
-Description=osworld service
-StartLimitIntervalSec=60
-StartLimitBurst=4
-After=network.target auditd.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /home/user/server/main.py
-User=user
-WorkingDirectory=/home/user
-Environment="DISPLAY=:0"
-Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"
-Environment="XDG_RUNTIME_DIR=/run/user/1000"
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-```
-
-修改点说明：
-- `ExecStart`：确保 Python 路径与 `main.py` 路径正确（建议使用 `/usr/bin/python3`）
-- `User`/`WorkingDirectory`：与实际用户名与目录一致
-- `DISPLAY`：若默认 X server 为 `:0`，请保持为 `:0`
-- `DBUS_SESSION_BUS_ADDRESS`：用于壁纸等 DBUS 操作
-- `XDG_RUNTIME_DIR`：与用户会话一致（通常 `/run/user/1000`）
-
-3) 安装与启用服务
-```
-sudo cp desktop_env/server/osworld_server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable osworld_server.service
-sudo systemctl start osworld_server.service
-```
-
-查看状态/排错：
-```
-sudo systemctl status osworld_server.service
-journalctl -xe
-```
-
----
-
-## 四、直接运行（不使用 systemd）
-
-- 在仓库根目录直接运行：
-```
-python3 desktop_env/server/main.py
-```
-- 或在包含 `main.py` 的目录中运行（路径按实际调整）。
-
-默认监听 `0.0.0.0:5000`，可通过浏览器或 `curl` 调用 API。
-
----
-
-## 五、网络端口与远程控制（核心与可选）
-
-建议开放/使用的端口：
-- Flask server_port：`5000`
-- Chromium remote debugging：`9222`（通常通过 `socat` 从 `1337` 转发）
-- noVNC：`5910`
-- VLC HTTP：`8080`
-- VNC（x11vnc）：`5900`（noVNC 通过 `5910` 转发）
-
-安装 `socat`：
-```
-sudo apt install -y socat
-```
-
-Chrome 远程调试端口（GUI 启动也生效）：
-- 修改 `~/.local/share/applications/google-chrome.desktop` 或 `/usr/share/applications/google-chrome.desktop`，将所有 `Exec` 行改为：
-```
-Exec=/usr/bin/google-chrome-stable --remote-debugging-port=1337 --remote-debugging-address=0.0.0.0 %U
-```
-- 在 VM 内用 `socat` 将 `1337` -> `9222`（按实际场景转发）。
-
----
-
-## 六、QCOW 镜像下载与配置（用于 Docker/云端 VM）
-
-1) 下载镜像  
-以 Ubuntu 为例（体积较大，确保磁盘空间充足）：
+### 下载 QCOW2 镜像（示例）
+以 Ubuntu 为例：
 ```
 mkdir -p ~/VMs && cd ~/VMs
 wget https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip
-unzip Ubuntu.qcow2.zip  # 将得到 Ubuntu.qcow2
+unzip Ubuntu.qcow2.zip  # 得到 Ubuntu.qcow2
 ```
+如需 Windows 镜像：
+- https://huggingface.co/datasets/xlangai/windows_osworld/resolve/main/Windows-10-x64.qcow2.zip
 
-2) 配置路径（`configs/config.yaml`）  
-文件：`configs/config.yaml`
+> 说明：镜像体积较大，确保下载与解压空间充足。
+
+---
+
+## 2. 修改配置（“要修改哪里”）
+
+配置文件位置：`configs/config.yaml`。示例内容如下（请按实际环境修改）：
 ```yaml
 remote_docker_server:
-  ip: "10.1.110.48"   # 修改为你的远程（或本机）IP
-  port: 50003         # 修改为你的远程 Docker server 端口
-  path_to_vm: "/absolute/path/to/Ubuntu.qcow2"  # 修改为实际解压出的 qcow2 路径
+  ip: "10.1.110.48"   # 修改为你的服务器（或本机）IP
+  port: 50003         # 建议保持 50003，或按需自定义
+  path_to_vm: "/absolute/path/to/Ubuntu.qcow2"  # 修改为实际解压出的 qcow2 绝对路径
+
+# Token 并发配额配置：键为 token 名称，值为允许并发的机器数量
+tokens:
+  alpha: 24
+  enqi: 4
+
+# 认证设置：是否需要 token、认证头名称与 Bearer 前缀
+auth:
+  require_token: true
+  header_name: "Authorization"
+  bearer_prefix: "Bearer "
 ```
 
-说明：
-- `desktop_env/docker_server/server.py` 会从 `configs/config.yaml` 读取 `path_to_vm`：
-  ```python
-  DEFAULT_VM_PATH = "/home/shichenrui/TongGUI/ubuntu_env/desktop_env/Ubuntu.qcow2"
-  PATH_TO_VM = _cfg_get("remote_docker_server.path_to_vm", DEFAULT_VM_PATH)
-  ```
-  请务必将 `path_to_vm` 改为你的实际绝对路径，避免默认值指向开发者机器路径。
-
-3) 云厂商导入流程（参考）
-- Aliyun/火山引擎等：下载并解压后上传到对象存储（OSS/TOS），在控制台执行“导入镜像”。
-- 文档参考：
-  - `desktop_env/providers/aliyun/ALIYUN_GUIDELINE.md` / `ALIYUN_GUIDELINE_CN.md`
-  - `desktop_env/providers/volcengine/VOLCENGINE_GUIDELINE_CN.md`
-- Docker 场景：`desktop_env/providers/docker/manager.py` 中 `UBUNTU_X86_URL` 即为上述链接。
+- `remote_docker_server.ip` 与 `port`：用于对外提供服务，客户端将以 `http://<ip>:<port>` 访问
+- `remote_docker_server.path_to_vm`：必须指向你刚解压得到的 QCOW2 文件的绝对路径
+- `tokens`：配置“可使用的 token 名”和“每个 token 的并发机器个数”，服务启动后会按此进行配额控制
+- `auth`：
+  - `require_token: true` 时，所有调用需提供合法 token
+  - token 的传递方式：
+    - Header：`Authorization: Bearer <token>`
+    - 或 JSON body：`{"token": "<token>"}`（部分接口）
+    - 或查询字符串：`?token=<token>`
 
 ---
 
-## 七、API 验证（示例）
+## 3. 启动服务
 
-服务启动后（默认端口 `5000`）：
-
-- 获取平台：
+在仓库根目录执行（Linux）：
 ```
-curl http://<VM-IP>:5000/platform
+python3 desktop_env/docker_server/server.py
 ```
 
-- 截图（带鼠标指针）：
-```
-curl -o screenshot.png http://<VM-IP>:5000/screenshot
-```
+- 服务默认监听：`0.0.0.0:50003`（见 `server.py` 末尾）
+- 首次启动且镜像未存在时，会自动拉取 Docker 镜像：`happysixd/osworld-docker`
+  - QCOW2 将以只读方式挂载到容器 `/System.qcow2`
+  - Docker 容器会暴露诸如 `VNC/Chromium/Flask/VLC` 等端口（由内部实现决定），供桌面模拟器与可视化使用
 
-- 执行命令：
-```
-curl -X POST http://<VM-IP>:5000/execute -H "Content-Type: application/json" \
-  -d '{"command":"gnome-screenshot","shell":false}'
-```
-
-- 使用服务端下载器（适合大文件，带重试与完整性校验）：
-```
-curl -X POST http://<VM-IP>:5000/setup/download_file -H "Content-Type: application/json" \
-  -d '{"url":"https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip", "path":"~/VMs/Ubuntu.qcow2.zip"}'
-```
+> 注意：服务的行为依赖 Docker 与宿主机能力（如是否有 `/dev/kvm` 以启用 KVM 加速）。只要 `configs/config.yaml` 正确设置 `path_to_vm`，即可拉起相应的模拟器。
 
 ---
 
-## 八、常见问题与排查
+## 4. 用示例脚本验证（env_test.py）
 
-- 服务无法获取壁纸或 DBUS 错误：  
-  确认在服务单元文件设置了
-  `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus` 与 `XDG_RUNTIME_DIR=/run/user/1000`，并且存在用户会话。
+示例脚本位置：`env_test.py`，内容如下：
+```python
+from desktop_env.desktop_env import DesktopEnv
+import os 
 
-- AT-SPI 不工作：  
-  确认安装了 `python3-pyatspi`；在 GNOME 中启用 `toolkit-accessibility`；使用 Xorg 而非 Wayland。
+os.environ["OSWORLD_TOKEN"] = 'enqi'
+os.environ["OSWORLD_BASE_URL"] = 'http://10.1.110.48:50003'
+env = DesktopEnv(
+            action_space="pyautogui",
+            provider_name="docker_server",
+            os_type='Ubuntu',
+        )
+```
 
-- Chrome 远程调试端口失效：  
-  确保所有桌面条目的 `Exec` 都包含 `--remote-debugging-port=1337 --remote-debugging-address=0.0.0.0`，并使用 `socat` 转发到 `9222`。
-
-- 视频录制（`/start_recording`）失败：  
-  确认 `ffmpeg` 已安装，且 `DISPLAY=:0`（与系统 X11 配置一致）。
-
-- systemd 找不到 Python：  
-  统一使用 `/usr/bin/python3`，或按需建立符号链接。
-
-- `pip` 安装 `python3-xlib` 报错：  
-  使用 `apt` 安装 `python3-xlib`，并在必要时跳过该行或使用 `python-xlib` 包替代（注意版本兼容性）。
-
----
-
-## 九、变更点汇总（“要修改哪里”）
-
-- `desktop_env/server/osworld_server.service`：
-  - `ExecStart`：`/usr/bin/python3 /home/<你的用户名>/server/main.py`
-  - `User` / `WorkingDirectory`：替换为你的实际用户名和目录
-  - `Environment`：
-    - `DISPLAY=:0`
-    - `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus`
-    - `XDG_RUNTIME_DIR=/run/user/1000`
-
-- `configs/config.yaml`：
-  - `remote_docker_server.ip`：修改为你的服务器 IP
-  - `remote_docker_server.port`：修改为你的端口
-  - `remote_docker_server.path_to_vm`：指向你解压后的 `Ubuntu.qcow2` 绝对路径
-
-- Chrome 桌面条目（`/usr/share/applications/google-chrome.desktop` 或用户级路径）：
-  - 所有 `Exec` 行添加：`--remote-debugging-port=1337 --remote-debugging-address=0.0.0.0`
+使用方法：
+1) 将 `OSWORLD_TOKEN` 修改为你在 `configs/config.yaml` 中配置的合法 token（例如 `enqi`）
+2) 将 `OSWORLD_BASE_URL` 修改为你的服务器地址（例如 `http://<ip>:50003`）
+3) 运行：
+   ```
+   python3 env_test.py
+   ```
+   - 若配额充足且服务正常，该脚本会通过 `docker_server` provider 请求启动一个模拟器（emulator）
+   - 失败时，检查 `configs/config.yaml` 中 `path_to_vm` 是否为有效绝对路径、`tokens` 是否包含该 token 且有可用并发额度
 
 ---
 
-## 十、许可证
+## 5. Dashboard 与状态查看
 
-见仓库 `LICENSE` 文件。
+服务提供 Dashboard 与若干状态接口，便于可视化与排查：
+- Dashboard: `http://<ip>:50003/dashboard`
+  - 展示服务器与正在运行的模拟器状态（容器、端口、资源简要等）
+- 其他接口（只列名称，避免冗长示例）：
+  - `/status`（总体 CPU/内存、镜像容器数量、当前 emulator 数量、tokens 概览）
+  - `/tokens`（各 token 当前使用量与限制）
+  - `/emulators`（正在运行的 emulator 列表）
+  - `/emulator_resources`（各容器资源使用简要）
+  - `/request_logs`（最近请求日志）
+  - `/set_token_limit`（动态调整已存在 token 的并发上限）
+
+> 动态调整配额：可以在服务运行时调用 `/set_token_limit` 修改现有 token 的并发上限；也可直接编辑 `configs/config.yaml` 后重启服务来生效。
+
+---
+
+## 6. Docker 镜像与 QCOW2 的关系（简述）
+
+- Docker 镜像：`happysixd/osworld-docker`
+  - 提供 QEMU 及运行时（以及所需的依赖与工具）
+- QCOW2 镜像：你的来宾操作系统系统盘（例如 Ubuntu/Windows）
+  - 在启动容器时以只读方式挂载为 `/System.qcow2`
+  - 由容器中的 QEMU 挂载并作为来宾 OS 的虚拟磁盘
+
+---
+
+## 7. 常见注意事项
+
+- `path_to_vm` 必须为绝对路径且存在；否则启动模拟器会失败
+- 确保 Docker 服务可用，且服务器主机资源足够（CPU/内存/磁盘）
+- 若启用了 `require_token`，客户端必须提供合法 token，否则请求会被拒绝
+- `configs/config.yaml` 中的 `ip` 与 `port` 用于外部访问，请与实际网络环境保持一致
+- 容器端口映射与资源统计由内部实现控制；Dashboard 可帮助观察当前运行状态
+
+---
+
+## 8. 许可证
+
+参见仓库 `LICENSE` 文件。
