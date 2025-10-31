@@ -31,6 +31,13 @@ pip install omegaconf
 
 - Ubuntu Docker 安装/更新教程（参考）：  
   https://www.runoob.com/docker/ubuntu-docker-install.html
+# 下载并执行Docker官方安装脚本
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# 启动Docker服务
+sudo systemctl start docker
+sudo systemctl enable docker
 
 拉取运行镜像：
 ```
@@ -56,8 +63,6 @@ wget https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.
 unzip Ubuntu.qcow2.zip  # 得到 Ubuntu.qcow2
 ```
 
-如需 Windows 镜像：
-- https://huggingface.co/datasets/xlangai/windows_osworld/resolve/main/Windows-10-x64.qcow2.zip
 
 — — —
 
