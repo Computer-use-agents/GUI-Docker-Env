@@ -1,0 +1,125 @@
+{
+  "base_url": "http://127.0.0.1:50003",
+  "token": "loadtest",
+  "max_concurrency": 12,
+  "step": 4,
+  "hold_secs": 20,
+  "request_timeout": 300,
+  "stop_between_steps": true,
+  "started_at": 1760066193.9852924,
+  "steps": [
+    {
+      "concurrency": 4,
+      "launched": 4,
+      "success": 4,
+      "failures": [],
+      "emulator_ids": [
+        "b6a77fd4-ce4c-49a3-9355-b2782aa5aa26",
+        "420090d0-3791-4417-b9a7-2185b62a19ba",
+        "1e6eff1f-a250-4c03-b4d6-915c20178e9a",
+        "bf76950c-6673-40ac-93ef-6e43c9b43209"
+      ],
+      "status_snapshot": {
+        "status_code": 200,
+        "data": {
+          "cpu_percent": 7.7,
+          "memory_percent": 33.5,
+          "tokens": [
+            {
+              "available": 18,
+              "current": 4,
+              "limit": 22,
+              "token": "loadtest"
+            }
+          ],
+          "total_containers_for_image": 4,
+          "total_emulators": 4,
+          "uptime_seconds": 517
+        }
+      },
+      "started_at": 1760066193.9853055,
+      "finished_at": 1760066227.1445382,
+      "duration_secs": 33.15923261642456
+    },
+    {
+      "concurrency": 8,
+      "launched": 8,
+      "success": 8,
+      "failures": [],
+      "emulator_ids": [
+        "1617dd60-dba6-4092-a606-dd6320f90f25",
+        "027c1dd1-5e8d-4c6a-97a6-2b17b7037d90",
+        "1d73561a-724c-4acb-bd37-0a668ebe1904",
+        "6a3cde19-a75a-4936-b19b-894560bef863",
+        "253d29b1-3c3d-477f-85c9-cf6dfeaa2696",
+        "e520326f-8f37-4b35-b2e3-77399aa69573",
+        "a58ec2f5-c01c-47cd-8fb6-2e95d36a3a8c",
+        "e9d2300d-c770-4fe6-bcdf-e68301515704"
+      ],
+      "status_snapshot": {
+        "status_code": 200,
+        "data": {
+          "cpu_percent": 8.5,
+          "memory_percent": 46.6,
+          "tokens": [
+            {
+              "available": 14,
+              "current": 8,
+              "limit": 22,
+              "token": "loadtest"
+            }
+          ],
+          "total_containers_for_image": 8,
+          "total_emulators": 8,
+          "uptime_seconds": 562
+        }
+      },
+      "started_at": 1760066236.1157568,
+      "finished_at": 1760066272.1276498,
+      "duration_secs": 36.01189303398132
+    },
+    {
+      "concurrency": 12,
+      "launched": 12,
+      "success": 12,
+      "failures": [],
+      "emulator_ids": [
+        "9042970f-44d3-4ee9-9b16-325b0d2d0051",
+        "cb49caae-152b-493e-b413-430c91fba404",
+        "719da8af-d84b-4a04-a163-9abeacbb155c",
+        "5c919c20-efda-4f16-8108-a104d72ea7f9",
+        "68618829-656e-412e-956d-73ce8d4f52ae",
+        "52915410-961e-4462-85d9-557b8ba11b4f",
+        "5e37a71f-3f8d-4215-9e54-8e23f1aeb98d",
+        "fe71ea23-7a41-41e6-bb7c-2213d5aea84a",
+        "db65e5a3-49f3-4b09-a00c-b26fa74e124b",
+        "ab8c9d3e-f999-4106-856d-1afb12e21943",
+        "295fb848-d4ba-4903-a48a-368994db1fe3",
+        "e54f7bf7-5af1-4664-bef1-5b9b2eba88fe"
+      ],
+      "status_snapshot": {
+        "status_code": 200,
+        "data": {
+          "cpu_percent": 3.1,
+          "memory_percent": 59.9,
+          "tokens": [
+            {
+              "available": 10,
+              "current": 12,
+              "limit": 22,
+              "token": "loadtest"
+            }
+          ],
+          "total_containers_for_image": 12,
+          "total_emulators": 12,
+          "uptime_seconds": 611
+        }
+      },
+      "started_at": 1760066281.8327684,
+      "finished_at": 1760066320.7786028,
+      "duration_secs": 38.94583439826965
+    }
+  ],
+  "finished_at": 1760066331.2977731,
+  "duration_secs": 137.3124806880951
+}

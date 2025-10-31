@@ -1,0 +1,10 @@
+这个是一个虚拟环境的服务代码工程文件
+
+1. 运行逻辑是先运行 用tonggui 这个conda环境
+bash scripts/server.sh 启动服务
+
+2. 然后远程运行的一个事例如 ： 
+/home/shichenrui/OSWorldNew/run_remote.py
+
+这里展示了一个example json
+然后 所有其他的事例文件json 都在 /home/shichenrui/OSWorldNew/evaluation_examples/examples 这个文件夹下 虽有的json文件 每一个都对应一个example

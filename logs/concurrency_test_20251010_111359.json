@@ -1,0 +1,78 @@
+{
+  "base_url": "http://127.0.0.1:50003",
+  "token": "loadtest",
+  "max_concurrency": 4,
+  "step": 2,
+  "hold_secs": 10,
+  "request_timeout": 300,
+  "stop_between_steps": true,
+  "started_at": 1760065976.2429397,
+  "steps": [
+    {
+      "concurrency": 2,
+      "launched": 2,
+      "success": 2,
+      "failures": [],
+      "emulator_ids": [
+        "24e2bb19-1ccb-4b07-a698-6cfeeb68b8bc",
+        "eb4fe1f9-a8d1-473c-9322-c7198d25385c"
+      ],
+      "status_snapshot": {
+        "status_code": 200,
+        "data": {
+          "cpu_percent": 17.3,
+          "memory_percent": 26.7,
+          "tokens": [
+            {
+              "available": 12,
+              "current": 2,
+              "limit": 14,
+              "token": "loadtest"
+            }
+          ],
+          "total_containers_for_image": 2,
+          "total_emulators": 2,
+          "uptime_seconds": 289
+        }
+      },
+      "started_at": 1760065976.242949,
+      "finished_at": 1760065998.6970456,
+      "duration_secs": 22.45409655570984
+    },
+    {
+      "concurrency": 4,
+      "launched": 4,
+      "success": 4,
+      "failures": [],
+      "emulator_ids": [
+        "27b134fc-4d75-4b30-8f28-7e4264595a58",
+        "20357099-90b0-4f2b-912a-a0286dcbda3b",
+        "86daad27-e150-4150-b6dd-e1259a2f06c5",
+        "39c7ed3d-24a8-48b3-9f24-c03a1306bd2b"
+      ],
+      "status_snapshot": {
+        "status_code": 200,
+        "data": {
+          "cpu_percent": 12.7,
+          "memory_percent": 34.5,
+          "tokens": [
+            {
+              "available": 10,
+              "current": 4,
+              "limit": 14,
+              "token": "loadtest"
+            }
+          ],
+          "total_containers_for_image": 4,
+          "total_emulators": 4,
+          "uptime_seconds": 321
+        }
+      },
+      "started_at": 1760066007.3137622,
+      "finished_at": 1760066030.508467,
+      "duration_secs": 23.19470477104187
+    }
+  ],
+  "finished_at": 1760066039.4575405,
+  "duration_secs": 63.214600801467896
+}

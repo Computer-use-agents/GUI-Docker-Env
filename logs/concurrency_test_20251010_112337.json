@@ -1,0 +1,127 @@
+{
+  "base_url": "http://127.0.0.1:50003",
+  "token": "loadtest",
+  "max_concurrency": 12,
+  "step": 12,
+  "hold_secs": 30,
+  "request_timeout": 300,
+  "stop_between_steps": true,
+  "started_at": 1760066587.536251,
+  "steps": [
+    {
+      "concurrency": 12,
+      "launched": 12,
+      "success": 0,
+      "failures": [
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        },
+        {
+          "status_code": 429,
+          "data": {
+            "code": 429,
+            "message": "Token quota exceeded for 'loadtest': 27/22"
+          }
+        }
+      ],
+      "emulator_ids": [],
+      "status_snapshot": {
+        "status_code": 200,
+        "data": {
+          "cpu_percent": 12.0,
+          "memory_percent": 89.5,
+          "tokens": [
+            {
+              "available": 0,
+              "current": 23,
+              "limit": 22,
+              "token": "loadtest"
+            }
+          ],
+          "total_containers_for_image": 24,
+          "total_emulators": 24,
+          "uptime_seconds": 908
+        }
+      },
+      "started_at": 1760066587.5362656,
+      "finished_at": 1760066617.759039,
+      "duration_secs": 30.22277331352234
+    }
+  ],
+  "finished_at": 1760066617.759105,
+  "duration_secs": 30.222853899002075
+}
