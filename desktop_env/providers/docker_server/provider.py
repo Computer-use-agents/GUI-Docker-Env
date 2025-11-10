@@ -37,31 +37,39 @@ class RemoteDockerProvider(Provider):
         self.container = None
         self.emulator_id = None
         self.environment = {"DISK_SIZE": "2G", "RAM_SIZE": "2G", "CPU_CORES": "2"}  # Modify if needed
-        self.remote_docker_server_ip = remote_docker_server_ip
-        self.remote_docker_server_port = remote_docker_server_port
-        # Allow override via environment variables (preferred when runner passes --base-url)
+        
+        # Parse URL list from environment variable
+        self.server_urls = []  # List of (ip, port) tuples
         base_url = os.getenv("OSWORLD_BASE_URL")
+        
         if base_url:
-            try:
-                u = urlparse(base_url)
-                if not u.scheme:
-                    u = urlparse("http://" + base_url)
-                host = u.hostname or self.remote_docker_server_ip
-                port = u.port or self.remote_docker_server_port
-                self.remote_docker_server_ip = host
-                self.remote_docker_server_port = int(port)
-            except Exception:
-                pass
+            # Support comma-separated URL list
+            url_list = [url.strip() for url in base_url.split(',')]
+            for url in url_list:
+                try:
+                    u = urlparse(url)
+                    if not u.scheme:
+                        u = urlparse("http://" + url)
+                    host = u.hostname or remote_docker_server_ip
+                    port = u.port or remote_docker_server_port
+                    self.server_urls.append((host, int(port)))
+                except Exception as e:
+                    logger.warning(f"Failed to parse URL '{url}': {e}")
         else:
+            # Fallback to individual env vars or config defaults
             ip_env = os.getenv("OSWORLD_REMOTE_DOCKER_IP")
             port_env = os.getenv("OSWORLD_REMOTE_DOCKER_PORT")
-            if ip_env:
-                self.remote_docker_server_ip = ip_env
-            if port_env:
-                try:
-                    self.remote_docker_server_port = int(port_env)
-                except Exception:
-                    pass
+            host = ip_env or remote_docker_server_ip
+            port = int(port_env) if port_env else remote_docker_server_port
+            self.server_urls.append((host, port))
+        
+        if not self.server_urls:
+            raise ValueError("No valid server URLs configured")
+        
+        # Set initial server (will be updated when emulator starts)
+        self.remote_docker_server_ip = self.server_urls[0][0]
+        self.remote_docker_server_port = self.server_urls[0][1]
+        
         # token for quota/auth; prefer env OSWORLD_TOKEN, fallback to config.client_token if present
         self.token = os.getenv("OSWORLD_TOKEN")
         temp_dir = Path(os.getenv('TEMP') if platform.system() == 'Windows' else '/tmp')
@@ -116,30 +124,114 @@ class RemoteDockerProvider(Provider):
         
         raise TimeoutError("VM failed to become ready within timeout period")
 
+    def check_quota(self, server_ip=None, server_port=None):
+        """
+        Check current token quota status for a specific server.
+        Returns dict with quota information or raises RuntimeError if check fails.
+        """
+        token = self.token or os.getenv("OSWORLD_TOKEN")
+        if not token:
+            raise RuntimeError("Token is required for quota check")
+        
+        # Use provided server or current server
+        ip = server_ip or self.remote_docker_server_ip
+        port = server_port or self.remote_docker_server_port
+        
+        url = f"http://{ip}:{port}/tokens"
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if token not in data:
+                raise RuntimeError(f"Token '{token}' not found or unauthorized")
+            
+            token_info = data[token]
+            quota_info = {
+                "token": token,
+                "server": f"{ip}:{port}",
+                "current": token_info["current"],
+                "limit": token_info["limit"],
+                "available": token_info["limit"] - token_info["current"],
+                "can_start": token_info["current"] < token_info["limit"]
+            }
+            return quota_info
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to check quota on {ip}:{port}: {e}")
+
     def start_emulator(self, path_to_vm: str, headless: bool, os_type: str):
         """
-        Start emulator via remote docker server. Send token for per-token quota control if available.
+        Start emulator via remote docker server with round-robin polling across multiple servers.
+        Tries each server in the list until one succeeds or all fail.
         """
-        url = f"http://{self.remote_docker_server_ip}:{self.remote_docker_server_port}/start_emulator"
-        # Determine token: instance attr, env, or config.client_token
         token = self.token or os.getenv("OSWORLD_TOKEN")
-        try:
-            if token:
-                headers = {"Authorization": f"Bearer {token}"}
-                resp = requests.post(url, json={"token": str(token)}, headers=headers)
-            else:
-                resp = requests.get(url)
-            data = resp.json()
-            # Validate response
-            if resp.status_code != 200 or data.get("code") != 0 or "data" not in data:
-                raise RuntimeError(f"Failed to start emulator: status={resp.status_code}, payload={data}")
-            self.emulator_id = data["data"]["emulator_id"]
-            self.server_port = data["data"]["server_port"]
-            self.vnc_port = data["data"]["vnc_port"]
-            self.chromium_port = data["data"]["chromium_port"]
-            self.vlc_port = data["data"]["vlc_port"]
-        except Exception as e:
-            raise e
+        errors = []  # Collect errors from all servers
+        
+        # Try each server in the list
+        for idx, (server_ip, server_port) in enumerate(self.server_urls, 1):
+            logger.info(f"Trying server {idx}/{len(self.server_urls)}: {server_ip}:{server_port}")
+            
+            try:
+                # Check quota for this specific server
+                if token:
+                    quota = self.check_quota(server_ip, server_port)
+                    if not quota["can_start"]:
+                        error_msg = (
+                            f"Server {server_ip}:{server_port} quota exceeded: "
+                            f"{quota['current']}/{quota['limit']} VMs running"
+                        )
+                        logger.warning(error_msg)
+                        errors.append(error_msg)
+                        continue  # Try next server
+                    
+                    logger.info(
+                        f"Quota check passed for server {server_ip}:{server_port}: "
+                        f"{quota['current']}/{quota['limit']} VMs in use, {quota['available']} available"
+                    )
+                
+                # Try to start emulator on this server
+                url = f"http://{server_ip}:{server_port}/start_emulator"
+                if token:
+                    headers = {"Authorization": f"Bearer {token}"}
+                    resp = requests.post(url, json={"token": str(token)}, headers=headers, timeout=30)
+                else:
+                    resp = requests.get(url, timeout=30)
+                
+                data = resp.json()
+                
+                # Validate response
+                if resp.status_code != 200 or data.get("code") != 0 or "data" not in data:
+                    error_msg = f"Server {server_ip}:{server_port} failed: status={resp.status_code}, payload={data}"
+                    logger.warning(error_msg)
+                    errors.append(error_msg)
+                    continue  # Try next server
+                
+                # Success! Update current server info and return
+                self.remote_docker_server_ip = server_ip
+                self.remote_docker_server_port = server_port
+                self.emulator_id = data["data"]["emulator_id"]
+                self.server_port = data["data"]["server_port"]
+                self.vnc_port = data["data"]["vnc_port"]
+                self.chromium_port = data["data"]["chromium_port"]
+                self.vlc_port = data["data"]["vlc_port"]
+                logger.info(
+                    f"Successfully started emulator {self.emulator_id} on server {server_ip}:{server_port}"
+                )
+                return  # Success, exit function
+                
+            except Exception as e:
+                error_msg = f"Server {server_ip}:{server_port} error: {str(e)}"
+                logger.warning(error_msg)
+                errors.append(error_msg)
+                continue  # Try next server
+        
+        # All servers failed
+        error_summary = "\n".join([f"  - {err}" for err in errors])
+        raise RuntimeError(
+            f"Failed to start emulator on all {len(self.server_urls)} servers:\n{error_summary}"
+        )
 
     def get_ip_address(self, path_to_vm: str) -> str:
         if not all([self.server_port, self.chromium_port, self.vnc_port, self.vlc_port]):

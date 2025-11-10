@@ -5,8 +5,7 @@ remote_docker_server:
 
 # Token-based quota configuration
 tokens:
-  alpha: 24
-  enqi: 4  
+  dart: 10
 
 # Authentication settings for the remote docker server API
 auth:

@@ -49,6 +49,9 @@ LOCK_TIMEOUT = 10
 DEFAULT_VM_PATH = "/home/shichenrui/TongGUI/ubuntu_env/desktop_env/Ubuntu.qcow2"
 PATH_TO_VM = _cfg_get("remote_docker_server.path_to_vm", DEFAULT_VM_PATH)
 
+# Base directory for resolving script paths
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 # Flask app (templates under ./templates next to this file)
 app = Flask(__name__)
 
@@ -606,12 +609,170 @@ def set_token_limit():
         token_usage[token]["limit"] = limit
     return jsonify({"message": f"Token '{token}' limit set to {limit}", "code": 0})
 
+@app.route("/stop_all_emulators", methods=["POST"])
+def stop_all_emulators():
+    """
+    Stop all emulators currently in memory.
+    Honors REQUIRE_TOKEN - only stops emulators owned by the requester's token.
+    """
+    requester_token = _extract_token(request)
+    if REQUIRE_TOKEN and not requester_token:
+        return jsonify({"message": "Token required", "code": 401}), 401
+    
+    stopped_count = 0
+    failed_count = 0
+    stopped_ids = []
+    
+    # Get list of emulators to stop (filter by token if REQUIRE_TOKEN)
+    with lock:
+        emus_to_stop = []
+        for eid, emu in list(emulators.items()):
+            if REQUIRE_TOKEN:
+                if emu.token == requester_token:
+                    emus_to_stop.append((eid, emu))
+            else:
+                emus_to_stop.append((eid, emu))
+    
+    # Stop each emulator
+    for eid, emu in emus_to_stop:
+        try:
+            emu.stop_emulator()
+            stopped_ids.append(eid)
+            stopped_count += 1
+            
+            # Update state
+            with lock:
+                token = emu.token
+                try:
+                    if token in token_usage:
+                        if eid in token_usage[token]["emulator_ids"]:
+                            token_usage[token]["emulator_ids"].remove(eid)
+                        if token_usage[token]["current"] > 0:
+                            token_usage[token]["current"] -= 1
+                finally:
+                    emulators.pop(eid, None)
+        except Exception as e:
+            logger.error(f"Failed to stop emulator {eid}: {e}")
+            failed_count += 1
+    
+    return jsonify({
+        "message": f"Stopped {stopped_count} emulator(s), {failed_count} failed",
+        "code": 0,
+        "stopped_count": stopped_count,
+        "failed_count": failed_count,
+        "stopped_ids": stopped_ids
+    })
+
+@app.route("/remove_all_containers", methods=["POST"])
+def remove_all_containers():
+    """
+    Remove Docker containers using Docker SDK with filters.
+    Supports min_age (minutes), image filter, and dry_run mode.
+    """
+    requester_token = _extract_token(request)
+    if REQUIRE_TOKEN and not requester_token:
+        return jsonify({"message": "Token required", "code": 401}), 401
+    
+    # Parse parameters
+    data = request.get_json(silent=True) or {}
+    min_age = int(data.get("min_age", 0))
+    image_name = str(data.get("image", "happysixd/osworld-docker")).strip()
+    dry_run = bool(data.get("dry_run", False))
+    
+    try:
+        dclient = docker.from_env()
+    except Exception as e:
+        logger.error(f"Failed to connect to Docker: {e}")
+        return jsonify({"message": f"Failed to connect to Docker: {e}", "code": 500}), 500
+    
+    removed_count = 0
+    failed_count = 0
+    removed_ids = []
+    
+    try:
+        # Get all containers (including stopped ones)
+        all_containers = dclient.containers.list(all=True)
+        
+        # Filter containers by image
+        matching_containers = []
+        for container in all_containers:
+            try:
+                image_tags = container.image.tags if container.image else []
+                if any(image_name in tag for tag in image_tags):
+                    matching_containers.append(container)
+            except Exception as e:
+                logger.warning(f"Failed to check image for container {container.id[:12]}: {e}")
+                continue
+        
+        if not matching_containers:
+            return jsonify({
+                "message": f"No containers found for image '{image_name}'",
+                "code": 0,
+                "removed_count": 0,
+                "failed_count": 0,
+                "removed_ids": []
+            })
+        
+        # Process each matching container
+        for container in matching_containers:
+            try:
+                container_id = container.id[:12]
+                
+                # Calculate age
+                created_str = container.attrs['Created']
+                created_dt = datetime.fromisoformat(created_str.replace('Z', '+00:00'))
+                now = datetime.now(datetime.timezone.utc)
+                age_minutes = int((now - created_dt).total_seconds() / 60)
+                
+                # Check if container is old enough
+                if age_minutes >= min_age:
+                    if dry_run:
+                        logger.info(f"[DRY RUN] Would remove container {container_id}")
+                        removed_ids.append(container_id)
+                        removed_count += 1
+                    else:
+                        try:
+                            container.remove(force=True)
+                            logger.info(f"Successfully removed container {container_id}")
+                            removed_ids.append(container_id)
+                            removed_count += 1
+                        except Exception as e:
+                            logger.error(f"Failed to remove container {container_id}: {e}")
+                            failed_count += 1
+                else:
+                    logger.info(f"Container {container_id} is too young (age: {age_minutes} min, threshold: {min_age} min)")
+            except Exception as e:
+                logger.error(f"Error processing container: {e}")
+                failed_count += 1
+                continue
+        
+    except Exception as e:
+        logger.error(f"Error listing containers: {e}")
+        return jsonify({"message": f"Error listing containers: {e}", "code": 500}), 500
+    
+    return jsonify({
+        "message": f"{'[DRY RUN] Would remove' if dry_run else 'Removed'} {removed_count} container(s), {failed_count} failed",
+        "code": 0,
+        "removed_count": removed_count,
+        "failed_count": failed_count,
+        "removed_ids": removed_ids,
+        "dry_run": dry_run
+    })
+
 @app.route("/cleanup", methods=["POST"])
 def cleanup():
+    """
+    Legacy cleanup endpoint - now uses absolute path resolution.
+    """
     try:
-        ret = os.system("bash scripts/remove_all.sh")
+        script_path = os.path.join(BASE_DIR, "scripts", "remove_all.sh")
+        if not os.path.exists(script_path):
+            return jsonify({"message": f"Script not found at {script_path}", "code": 404}), 404
+        
+        ret = os.system(f"bash {script_path}")
         return jsonify({"message": "Cleanup executed", "code": 0, "ret": ret})
     except Exception as e:
+        logger.error(f"Cleanup error: {e}")
         return jsonify({"message": f"Cleanup error: {e}", "code": 500}), 500
 
 @app.route("/dashboard", methods=["GET"])

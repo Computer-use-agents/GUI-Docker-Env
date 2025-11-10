@@ -259,8 +259,29 @@
 
       <div class="col-12 card">
         <h2>Utilities</h2>
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 8px; font-weight: 600;">Authorization Token (optional)</label>
+          <input id="authToken" type="text" placeholder="Enter token if REQUIRE_TOKEN is enabled" style="width: 100%; max-width: 400px;" />
+          <div class="muted" style="margin-top: 4px;">Token will be saved in browser localStorage and included in all API requests</div>
+        </div>
+        <div class="row-actions" style="margin-bottom: 12px;">
+          <a class="btn primary" href="javascript:void(0)" onclick="stopAllEmulators()">Stop All Emulators</a>
+          <span class="muted">Stop all emulators currently in memory</span>
+          <span id="stopAllMsg" class="muted"></span>
+        </div>
+        <div class="row-actions" style="margin-bottom: 12px;">
+          <form class="inline" id="removeAllForm" onsubmit="return removeAllContainers(event)">
+            <button class="btn danger" type="submit">Remove All Containers</button>
+            <label>Min Age (min)</label>
+            <input id="minAge" type="number" min="0" value="0" style="width: 80px;" />
+            <label>Image</label>
+            <input id="imageFilter" type="text" value="happysixd/osworld-docker" style="width: 200px;" />
+            <label><input id="dryRun" type="checkbox" /> Dry Run</label>
+            <span id="removeAllMsg" class="muted"></span>
+          </form>
+        </div>
         <div class="row-actions">
-          <a class="btn warn" href="javascript:void(0)" onclick="cleanupAll()">Run remove_all.sh</a>
+          <a class="btn warn" href="javascript:void(0)" onclick="cleanupAll()">Run remove_all.sh (Legacy)</a>
           <span class="muted">This will remove stale containers using scripts/remove_all.sh on the server.</span>
           <span id="cleanupMsg" class="muted"></span>
         </div>
@@ -273,6 +294,41 @@
   </main>
 
   <script>
+    // Token management
+    const TOKEN_KEY = "osworld_auth_token";
+    
+    function getAuthHeaders() {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const headers = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      return headers;
+    }
+    
+    function saveToken() {
+      const token = document.getElementById("authToken").value.trim();
+      if (token) {
+        localStorage.setItem(TOKEN_KEY, token);
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+      }
+    }
+    
+    function loadToken() {
+      const token = localStorage.getItem(TOKEN_KEY);
+      if (token) {
+        document.getElementById("authToken").value = token;
+      }
+    }
+    
+    // Auto-save token on input change
+    document.addEventListener("DOMContentLoaded", () => {
+      loadToken();
+      const tokenInput = document.getElementById("authToken");
+      tokenInput.addEventListener("input", saveToken);
+    });
+    
     const fmtUptime = (secs) => {
       if (!secs && secs !== 0) return "-";
       const d = Math.floor(secs / 86400);
@@ -369,7 +425,7 @@
       try {
         const resp = await fetch("/stop_emulator", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getAuthHeaders(),
           body: JSON.stringify({ emulator_id: eid })
         });
         const js = await resp.json();
@@ -389,7 +445,7 @@
       try {
         const resp = await fetch("/set_token_limit", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getAuthHeaders(),
           body: JSON.stringify({ token: t, limit: Number(v) })
         });
         const js = await resp.json();
@@ -403,11 +459,63 @@
       return false;
     }
 
+    async function stopAllEmulators() {
+      const msg = document.getElementById("stopAllMsg");
+      msg.textContent = "Stopping all emulators...";
+      try {
+        const resp = await fetch("/stop_all_emulators", {
+          method: "POST",
+          headers: getAuthHeaders()
+        });
+        const js = await resp.json();
+        msg.textContent = js.message || "Completed";
+        await fetchStatus();
+        await fetchEmulators();
+        setTimeout(() => { msg.textContent = ""; }, 3000);
+      } catch (e) {
+        console.error(e);
+        msg.textContent = "Error stopping emulators";
+      }
+    }
+
+    async function removeAllContainers(ev) {
+      ev.preventDefault();
+      const msg = document.getElementById("removeAllMsg");
+      const minAge = parseInt(document.getElementById("minAge").value) || 0;
+      const image = document.getElementById("imageFilter").value.trim();
+      const dryRun = document.getElementById("dryRun").checked;
+      
+      msg.textContent = dryRun ? "Running dry-run..." : "Removing containers...";
+      try {
+        const resp = await fetch("/remove_all_containers", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            min_age: minAge,
+            image: image,
+            dry_run: dryRun
+          })
+        });
+        const js = await resp.json();
+        msg.textContent = js.message || "Completed";
+        await fetchStatus();
+        await fetchEmulators();
+        setTimeout(() => { msg.textContent = ""; }, 3000);
+      } catch (e) {
+        console.error(e);
+        msg.textContent = "Error removing containers";
+      }
+      return false;
+    }
+
     async function cleanupAll() {
       const msg = document.getElementById("cleanupMsg");
       msg.textContent = "Triggering cleanup...";
       try {
-        const resp = await fetch("/cleanup", { method: "POST" });
+        const resp = await fetch("/cleanup", {
+          method: "POST",
+          headers: getAuthHeaders()
+        });
         const js = await resp.json().catch(() => ({}));
         msg.textContent = (js && js.message) ? js.message : "Cleanup executed";
         await fetchStatus();
