@@ -290,12 +290,23 @@ def start_emulator():
         labels = {"osworld.emulator_id": emulator_id}
         if token:
             labels["osworld.token"] = token
-        provider.start_emulator(
-            path_to_vm=PATH_TO_VM,
-            headless=True,
-            os_type="linux",
-            labels=labels
-        )
+        try:
+            provider.start_emulator(
+                path_to_vm=PATH_TO_VM,
+                headless=True,
+                os_type="linux",
+                labels=labels
+            )
+        except TypeError as te:
+            # Backward compatibility: older DockerProvider.start_emulator may not accept 'labels'
+            if "labels" in str(te):
+                provider.start_emulator(
+                    path_to_vm=PATH_TO_VM,
+                    headless=True,
+                    os_type="linux"
+                )
+            else:
+                raise
         emu = Emulator(
             provider=provider,
             emulator_id=emulator_id,
@@ -346,6 +357,14 @@ def stop_emulator():
 
     emu = emulators[emulator_id]
     token = emu.token
+
+    # Validate token ownership if required
+    requester_token = _extract_token(request)
+    if REQUIRE_TOKEN:
+        if not requester_token:
+            return jsonify({"message": "Token required", "code": 401}), 401
+        if emu.token and emu.token != requester_token:
+            return jsonify({"message": "Forbidden: token does not own this emulator", "code": 403}), 403
 
     try:
         emu.stop_emulator()
@@ -424,9 +443,12 @@ def tokens():
 
 @app.route("/emulators", methods=["GET"])
 def list_emulators():
+    token_q = request.args.get("token")
     items = []
     for eid, emu in emulators.items():
-        items.append({
+        if token_q and emu.token != token_q:
+            continue
+        item = {
             "emulator_id": eid,
             "token": emu.token,
             "vnc_port": emu.provider.vnc_port,
@@ -435,13 +457,19 @@ def list_emulators():
             "server_port": emu.provider.server_port,
             "start_time": emu.start_time,
             "duration_minutes": emu.duration()
-        })
+        }
+        container = getattr(emu.provider, "container", None)
+        item["container_id"] = container.id if container else None
+        items.append(item)
     return jsonify(items)
 
 @app.route("/emulator_resources", methods=["GET"])
 def emulator_resources():
+    token_q = request.args.get("token")
     items = []
     for eid, emu in emulators.items():
+        if token_q and emu.token != token_q:
+            continue
         item = {
             "emulator_id": eid,
             "token": emu.token,
@@ -488,6 +516,73 @@ def emulator_resource_single(emulator_id):
         item["container_id"] = None
         item["resources"] = {"error": "container not available"}
     return jsonify(item)
+
+@app.route("/emulators_by_token", methods=["GET"])
+def emulators_by_token():
+    """
+    Convenience endpoint: GET /emulators_by_token?token=xxx
+    Returns only emulator_id list for given token.
+    """
+    token_q = request.args.get("token")
+    if not token_q:
+        return jsonify({"message": "token is required", "code": 400}), 400
+    ids = [eid for eid, emu in emulators.items() if emu.token == token_q]
+    return jsonify(ids)
+
+@app.route("/emulator_status/<emulator_id>", methods=["GET"])
+def emulator_status(emulator_id):
+    """
+    Explicit status endpoint. Returns running if emulator exists, else 404 with not_found code.
+    """
+    emu = emulators.get(emulator_id)
+    if not emu:
+        return jsonify({"message": "Emulator not found", "code": 404, "status": "not_found"}), 404
+    container = getattr(emu.provider, "container", None)
+    return jsonify({
+        "emulator_id": emulator_id,
+        "status": "running",
+        "token": emu.token,
+        "container_id": getattr(container, "id", None),
+        "vnc_port": emu.provider.vnc_port,
+        "chromium_port": emu.provider.chromium_port,
+        "vlc_port": emu.provider.vlc_port,
+        "server_port": emu.provider.server_port,
+        "duration_minutes": emu.duration()
+    })
+
+@app.route("/emulators/<emulator_id>", methods=["DELETE"])
+def delete_emulator(emulator_id):
+    """
+    RESTful delete to stop a given emulator by id. Honors REQUIRE_TOKEN ownership check.
+    """
+    emu = emulators.get(emulator_id)
+    if not emu:
+        return jsonify({"message": "Emulator not found", "code": 404}), 404
+
+    requester_token = _extract_token(request)
+    if REQUIRE_TOKEN:
+        if not requester_token:
+            return jsonify({"message": "Token required", "code": 401}), 401
+        if emu.token and emu.token != requester_token:
+            return jsonify({"message": "Forbidden: token does not own this emulator", "code": 403}), 403
+
+    try:
+        emu.stop_emulator()
+    except Exception as e:
+        logger.error(f"Error stopping emulator {emulator_id}: {e}")
+
+    with lock:
+        token = emu.token
+        try:
+            if token in token_usage:
+                if emulator_id in token_usage[token]["emulator_ids"]:
+                    token_usage[token]["emulator_ids"].remove(emulator_id)
+                if token_usage[token]["current"] > 0:
+                    token_usage[token]["current"] -= 1
+        finally:
+            emulators.pop(emulator_id, None)
+
+    return jsonify({"message": "Emulator stopped successfully", "code": 0})
 
 @app.route("/set_token_limit", methods=["POST"])
 def set_token_limit():
@@ -539,4 +634,5 @@ if __name__ == '__main__':
                 token_usage[t] = {"current": 0, "limit": int(lim), "emulator_ids": set()}
             else:
                 token_usage[t]["limit"] = int(lim)
-    app.run(debug=True, host="0.0.0.0", port=50003)
+    port = int(os.getenv("OSWORLD_SERVER_PORT", _cfg_get("remote_docker_server.port", 50003)))
+    app.run(debug=True, host="0.0.0.0", port=port)

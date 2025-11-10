@@ -155,8 +155,18 @@ class RemoteDockerProvider(Provider):
     def stop_emulator(self, path_to_vm: str):
         if self.emulator_id:
             logger.info("Stopping VM...")
+            headers = {}
+            token = self.token or os.getenv("OSWORLD_TOKEN")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
             try:
-                response = requests.post(f"http://{self.remote_docker_server_ip}:{self.remote_docker_server_port}/stop_emulator", json={"emulator_id": self.emulator_id})
+                # Prefer RESTful DELETE endpoint if available
+                del_url = f"http://{self.remote_docker_server_ip}:{self.remote_docker_server_port}/emulators/{self.emulator_id}"
+                resp = requests.delete(del_url, headers=headers, timeout=20)
+                if resp.status_code in (404, 405):
+                    # Fallback to legacy POST /stop_emulator
+                    post_url = f"http://{self.remote_docker_server_ip}:{self.remote_docker_server_port}/stop_emulator"
+                    requests.post(post_url, json={"emulator_id": self.emulator_id}, headers=headers, timeout=20)
             except Exception as e:
                 logger.error(f"Error stopping container: {e}")
             finally:
