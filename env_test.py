@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from desktop_env.desktop_env import DesktopEnv
 
 # 为本地测试提供默认值（若外部已设置环境变量则不会覆盖）
-os.environ.setdefault("OSWORLD_TOKEN", "enqi")
+os.environ.setdefault("OSWORLD_TOKEN", "dart")
 os.environ.setdefault("OSWORLD_BASE_URL", "http://10.1.110.48:50003")
 
 
@@ -136,16 +136,18 @@ def stop_emulator(emulator_id: str, token: Optional[str] = None, base_url: Optio
 
 if __name__ == "__main__":
     # 读取环境变量
-    token = os.environ.get("OSWORLD_TOKEN", "enqi")
+    token = os.environ.get("OSWORLD_TOKEN")
     base_url = os.environ.get("OSWORLD_BASE_URL", "http://localhost:50003")
     print(f"[env_test] base_url={base_url}, token={token}")
-
+    
+    # for i in range(4):
     # 启动一个远程 Docker 虚拟机（会通过 RemoteDockerProvider 调用 /start_emulator）
     env = DesktopEnv(
         action_space="pyautogui",
         provider_name="docker_server",
         os_type="Ubuntu",
     )
+    exit()
 
     emu_id = None
     try:
@@ -187,7 +189,8 @@ if __name__ == "__main__":
 
     finally:
         # 确保资源清理（若已经通过远程 stop 了，这里可能无需再次 stop）
-        try:
-            env.close()
-        except Exception:
-            pass
+        print('finish')
+        # try:
+        #     env.close()
+        # except Exception:
+        #     pass

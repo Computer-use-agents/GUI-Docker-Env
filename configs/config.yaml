@@ -5,7 +5,7 @@ remote_docker_server:
 
 # Token-based quota configuration
 tokens:
-  dart: 10
+  dart: 2
 
 # Authentication settings for the remote docker server API
 auth:

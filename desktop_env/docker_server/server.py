@@ -273,7 +273,8 @@ def start_emulator():
     if token not in TOKEN_LIMITS:
         return jsonify({"message": f"Unknown or unauthorized token '{token}'", "code": 403}), 403
 
-    # Initialize/refresh token state
+    # Atomic quota check and pre-allocation
+    emulator_id = str(uuid.uuid4())
     with lock:
         ok = _ensure_token_initialized(token)
         if not ok:
@@ -282,13 +283,15 @@ def start_emulator():
         limit = token_usage[token]["limit"]
         if current >= limit:
             return jsonify({"message": f"Token quota exceeded for '{token}': {current}/{limit}", "code": 429}), 429
+        
+        # Immediately pre-allocate quota (atomic operation)
+        token_usage[token]["current"] += 1
+        token_usage[token]["emulator_ids"].add(emulator_id)
+        logger.info(f"Pre-allocated quota for token '{token}': {current+1}/{limit}, emulator_id={emulator_id}")
 
+    # Start emulator outside the lock
     provider = DockerProvider(region="")
-
-    # Start emulator
     try:
-        # generate emulator id first
-        emulator_id = str(uuid.uuid4())
         # Label container with token and emulator_id for observability
         labels = {"osworld.emulator_id": emulator_id}
         if token:
@@ -310,6 +313,8 @@ def start_emulator():
                 )
             else:
                 raise
+        
+        # Create emulator object
         emu = Emulator(
             provider=provider,
             emulator_id=emulator_id,
@@ -317,14 +322,7 @@ def start_emulator():
         )
         emulators[emulator_id] = emu
 
-        # Update token usage under lock
-        with lock:
-            token_usage[token]["current"] += 1
-            token_usage[token]["emulator_ids"].add(emulator_id)
-
-        # Optional cleanup call disabled to avoid removing newly started containers
-        # os.system("bash scripts/remove_all.sh")
-
+        logger.info(f"Successfully started emulator {emulator_id} for token '{token}'")
         return jsonify({
             "message": "Emulator started successfully",
             "code": 0,
@@ -338,8 +336,12 @@ def start_emulator():
             }
         })
     except Exception as e:
-        # On failure, ensure we didn't increment usage
-        logger.error(f"Failed to start emulator: {e}")
+        # Rollback quota on failure
+        logger.error(f"Failed to start emulator {emulator_id}: {e}")
+        with lock:
+            token_usage[token]["current"] -= 1
+            token_usage[token]["emulator_ids"].discard(emulator_id)
+            logger.info(f"Rolled back quota for token '{token}': {token_usage[token]['current']}/{limit}")
         try:
             if provider and provider.container:
                 provider.stop_emulator(path_to_vm=PATH_TO_VM)
