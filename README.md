@@ -19,6 +19,7 @@ conda create -n myenv python=3.10
 conda activate myenv
 pip install .
 pip install omegaconf
+pip install desktop_env
 ```
 
 说明：
